@@ -86,7 +86,7 @@ Paths use [JSON Pointer (RFC 6901)](https://tools.ietf.org/html/rfc6901) syntax:
 | `/foo/0`    | First element of array at "foo"                      |
 | `/foo/-`    | Append to end of array at "foo" (add operation only) |
 | `/foo/bar`  | Property "bar" nested in "foo"                       |
-| `/foo~0bar` | Property "~bar" (~ is escaped as ~0)                 |
+| `/foo~0bar` | Property "\~bar" (~ is escaped as ~0)                 |
 | `/foo~1bar` | Property "/bar" (/ is escaped as ~1)                 |
 
 ## API Reference
