@@ -210,7 +210,9 @@ pub fn patch_to_doc(patch: Patch) -> Doc {
         ]),
       )
     Remove(path) ->
-      Object(dict.from_list([#("op", String("remove")), #("path", String(path))]))
+      Object(
+        dict.from_list([#("op", String("remove")), #("path", String(path))]),
+      )
     Replace(path, value) ->
       Object(
         dict.from_list([
