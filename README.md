@@ -8,7 +8,7 @@ A JSON Patch ([RFC 6902](https://tools.ietf.org/html/rfc6902)) implementation fo
 ## Installation
 
 ```sh
-gleam add squirtle@3
+gleam add squirtle@2
 ```
 
 ## Usage
