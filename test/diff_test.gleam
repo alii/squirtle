@@ -16,7 +16,7 @@ pub fn diff_simple_replace_test() {
   patches
   |> should.equal([squirtle.Replace(path: "", value: squirtle.String("world"))])
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -43,7 +43,7 @@ pub fn diff_object_add_field_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -60,7 +60,7 @@ pub fn diff_object_remove_field_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -83,7 +83,7 @@ pub fn diff_object_replace_field_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -108,7 +108,7 @@ pub fn diff_object_multiple_changes_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -135,7 +135,7 @@ pub fn diff_nested_object_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -151,7 +151,7 @@ pub fn diff_array_add_elements_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -167,7 +167,7 @@ pub fn diff_array_remove_elements_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -182,7 +182,7 @@ pub fn diff_array_replace_elements_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -192,7 +192,7 @@ pub fn diff_array_mixed_changes_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -202,7 +202,7 @@ pub fn diff_empty_to_nonempty_array_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -212,7 +212,7 @@ pub fn diff_nonempty_to_empty_array_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -222,7 +222,7 @@ pub fn diff_type_change_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -232,7 +232,7 @@ pub fn diff_null_handling_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -279,7 +279,7 @@ pub fn diff_complex_nested_structure_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -297,7 +297,7 @@ pub fn diff_special_characters_in_keys_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -307,7 +307,7 @@ pub fn diff_boolean_values_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -317,7 +317,7 @@ pub fn diff_float_values_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }
 
@@ -341,6 +341,6 @@ pub fn diff_array_of_objects_test() {
 
   let patches = squirtle.diff(from, to)
 
-  squirtle.patch(from, patches)
+  squirtle.apply(from, patches)
   |> should.equal(Ok(to))
 }

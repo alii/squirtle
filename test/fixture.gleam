@@ -8,15 +8,15 @@ import squirtle
 pub type Fixture {
   Passing(
     comment: option.Option(String),
-    doc: squirtle.JsonValue,
-    patch: squirtle.JsonValue,
-    expected: squirtle.JsonValue,
+    doc: squirtle.Doc,
+    patch: squirtle.Doc,
+    expected: squirtle.Doc,
     disabled: Bool,
   )
   Failing(
     comment: option.Option(String),
-    doc: squirtle.JsonValue,
-    patch: squirtle.JsonValue,
+    doc: squirtle.Doc,
+    patch: squirtle.Doc,
     error: String,
     disabled: Bool,
   )
@@ -24,17 +24,17 @@ pub type Fixture {
 
 pub fn fixture_decoder() {
   use disabled <- decode.optional_field("disabled", False, decode.bool)
-  use doc <- decode.field("doc", squirtle.json_value_decoder())
+  use doc <- decode.field("doc", squirtle.decoder())
   use comment <- decode.optional_field(
     "comment",
     option.None,
     decode.string |> decode.map(option.Some),
   )
-  use patch <- decode.field("patch", squirtle.json_value_decoder())
+  use patch <- decode.field("patch", squirtle.decoder())
   use expected <- decode.optional_field(
     "expected",
     option.None,
-    squirtle.json_value_decoder() |> decode.map(fn(val) { option.Some(val) }),
+    squirtle.decoder() |> decode.map(fn(val) { option.Some(val) }),
   )
 
   case expected {

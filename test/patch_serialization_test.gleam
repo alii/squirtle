@@ -3,9 +3,9 @@ import gleam/json
 import gleeunit/should
 import squirtle
 
-pub fn patch_to_json_value_add_test() {
+pub fn patch_to_doc_add_test() {
   let patch = squirtle.Add(path: "/name", value: squirtle.String("John"))
-  let result = squirtle.patch_to_json_value(patch)
+  let result = squirtle.patch_to_doc(patch)
 
   result
   |> should.equal(
@@ -19,9 +19,9 @@ pub fn patch_to_json_value_add_test() {
   )
 }
 
-pub fn patch_to_json_value_remove_test() {
+pub fn patch_to_doc_remove_test() {
   let patch = squirtle.Remove(path: "/age")
-  let result = squirtle.patch_to_json_value(patch)
+  let result = squirtle.patch_to_doc(patch)
 
   result
   |> should.equal(
@@ -34,10 +34,10 @@ pub fn patch_to_json_value_remove_test() {
   )
 }
 
-pub fn patch_to_json_value_replace_test() {
+pub fn patch_to_doc_replace_test() {
   let patch =
     squirtle.Replace(path: "/email", value: squirtle.String("new@example.com"))
-  let result = squirtle.patch_to_json_value(patch)
+  let result = squirtle.patch_to_doc(patch)
 
   result
   |> should.equal(
@@ -51,9 +51,9 @@ pub fn patch_to_json_value_replace_test() {
   )
 }
 
-pub fn patch_to_json_value_copy_test() {
-  let patch = squirtle.Copy(from: "/name", path: "/nickname")
-  let result = squirtle.patch_to_json_value(patch)
+pub fn patch_to_doc_copy_test() {
+  let patch = squirtle.Copy(from: "/name", to: "/nickname")
+  let result = squirtle.patch_to_doc(patch)
 
   result
   |> should.equal(
@@ -67,9 +67,9 @@ pub fn patch_to_json_value_copy_test() {
   )
 }
 
-pub fn patch_to_json_value_move_test() {
-  let patch = squirtle.Move(from: "/old_name", path: "/new_name")
-  let result = squirtle.patch_to_json_value(patch)
+pub fn patch_to_doc_move_test() {
+  let patch = squirtle.Move(from: "/old_name", to: "/new_name")
+  let result = squirtle.patch_to_doc(patch)
 
   result
   |> should.equal(
@@ -83,9 +83,9 @@ pub fn patch_to_json_value_move_test() {
   )
 }
 
-pub fn patch_to_json_value_test_test() {
-  let patch = squirtle.Test(path: "/status", value: squirtle.String("active"))
-  let result = squirtle.patch_to_json_value(patch)
+pub fn patch_to_doc_test_test() {
+  let patch = squirtle.Test(path: "/status", expect: squirtle.String("active"))
+  let result = squirtle.patch_to_doc(patch)
 
   result
   |> should.equal(
@@ -104,7 +104,7 @@ pub fn patch_to_string_test() {
   let result = squirtle.patch_to_string(patch)
 
   // Parse it back to verify it's valid JSON
-  let assert Ok(parsed) = json.parse(result, squirtle.json_value_decoder())
+  let assert Ok(parsed) = json.parse(result, squirtle.decoder())
 
   parsed
   |> should.equal(
@@ -134,7 +134,7 @@ pub fn round_trip_test() {
   let doc =
     squirtle.Object(dict.from_list([#("name", squirtle.String("John"))]))
 
-  let assert Ok(result) = squirtle.patch(doc, [parsed_patch])
+  let assert Ok(result) = squirtle.apply(doc, [parsed_patch])
 
   result
   |> should.equal(
@@ -180,7 +180,7 @@ pub fn patches_to_string_integration_test() {
 
   let assert Ok(received_patches) = squirtle.parse_patches(patches_string)
 
-  let assert Ok(result) = squirtle.patch(doc1, received_patches)
+  let assert Ok(result) = squirtle.apply(doc1, received_patches)
 
   result |> should.equal(doc2)
 }

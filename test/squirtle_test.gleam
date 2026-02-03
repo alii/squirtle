@@ -27,13 +27,13 @@ fn iter_fixtures(fixtures: List(fixture.Fixture)) {
 
 fn run_fixture(fixture: fixture.Fixture) {
   case
-    squirtle.json_value_decode(
+    squirtle.decode(
       fixture.patch,
-      decode.list(squirtle.patch_decoder()),
+      with: decode.list(squirtle.patch_decoder()),
     )
   {
     Ok(patches) -> {
-      let r = squirtle.patch(fixture.doc, patches)
+      let r = squirtle.apply(fixture.doc, patches)
 
       case fixture {
         fixture.Passing(comment, _, _, expected, _) -> {

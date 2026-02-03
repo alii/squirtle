@@ -1,4 +1,8 @@
-import gleam/dict
+//// squirtle - RFC 6902 JSON Patch for Gleam
+////
+//// Apply patches to JSON documents, generate diffs, and serialize patches.
+
+import gleam/dict.{type Dict}
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/function
@@ -10,242 +14,261 @@ import gleam/result
 import gleam/set
 import gleam/string
 
-/// A JSON object represented as a dictionary mapping strings to JsonValues
-pub type JsonDict =
-  dict.Dict(String, JsonValue)
-
-/// A JSON array represented as a list of JsonValues
-pub type JsonArray =
-  List(JsonValue)
-
-/// Represents any JSON value
+/// A JSON document that can be patched.
 ///
-/// This type can represent all valid JSON values including objects, arrays,
-/// strings, numbers, booleans, and null.
-pub type JsonValue {
+/// This is a concrete representation of JSON that supports pattern matching
+/// and traversal, unlike gleam/json's opaque types.
+pub type Doc {
   Null
   String(String)
   Int(Int)
   Bool(Bool)
   Float(Float)
-  Array(JsonArray)
-  Object(JsonDict)
+  Array(List(Doc))
+  Object(Dict(String, Doc))
 }
 
-/// Decoder that parses a JSON string into a JsonValue
-pub fn string() {
-  decode.string |> decode.map(String)
-}
-
-/// Decoder that parses a JSON integer into a JsonValue
-pub fn int() {
-  decode.int |> decode.map(Int)
-}
-
-/// Decoder that parses a JSON boolean into a JsonValue
-pub fn bool() {
-  decode.bool |> decode.map(Bool)
-}
-
-/// Decoder that parses a JSON float into a JsonValue
-pub fn float() {
-  decode.float |> decode.map(Float)
-}
-
-/// Decoder that parses a JSON array into a JsonValue list
-pub fn list() -> decode.Decoder(JsonArray) {
-  decode.list(json_value_decoder())
-}
-
-/// Decoder that parses a JSON array into a JsonValue
-pub fn array() {
-  list() |> decode.map(Array)
-}
-
-/// Decoder that parses a JSON dictionary into a JsonDict
-pub fn dict() -> decode.Decoder(JsonDict) {
-  decode.dict(decode.string, json_value_decoder())
-}
-
-/// Decoder that parses a JSON object into a JsonValue
-pub fn object() {
-  dict() |> decode.map(Object)
-}
-
-/// Decoder that parses a JSON null into a JsonValue
-pub fn null() {
-  decode.success(Null)
-}
-
-/// Returns a decoder for parsing JSON into a JsonValue
+/// An RFC 6902 JSON Patch operation.
 ///
-/// This decoder can parse any valid JSON value.
+/// Patches describe transformations to apply to a JSON document.
+/// When applied in sequence, they transform the document step by step.
+pub type Patch {
+  /// Add a value at the target path. If the path points to an array index,
+  /// the value is inserted at that position.
+  Add(path: String, value: Doc)
+
+  /// Remove the value at the target path.
+  Remove(path: String)
+
+  /// Replace the value at the target path with a new value.
+  /// The path must already exist.
+  Replace(path: String, value: Doc)
+
+  /// Copy the value from one path to another.
+  Copy(from: String, to: String)
+
+  /// Move the value from one path to another (copy then remove).
+  Move(from: String, to: String)
+
+  /// Test that the value at a path equals the expected value.
+  /// If the test fails, the entire patch operation fails.
+  Test(path: String, expect: Doc)
+}
+
+/// Errors that can occur when applying patches.
+pub type PatchError {
+  /// The specified path does not exist in the document.
+  PathNotFound(path: String)
+
+  /// An array index in the path is invalid (not a number, has leading zeros, etc).
+  InvalidIndex(path: String, index: String)
+
+  /// An array index is outside the bounds of the array.
+  IndexOutOfBounds(path: String, index: Int)
+
+  /// Attempted to navigate into a value that is not an object or array.
+  NotAContainer(path: String)
+
+  /// Cannot remove the root document.
+  CannotRemoveRoot
+
+  /// A test operation failed because the values didn't match.
+  TestFailed(path: String, expected: Doc, actual: Doc)
+
+  /// The JSON pointer path is malformed.
+  InvalidPath(reason: String)
+}
+
+/// Apply a list of patches to a document.
+///
+/// Patches are applied in order. If any patch fails, the operation stops
+/// and returns an error. All patches must succeed for the operation to succeed.
 ///
 /// ## Example
 ///
 /// ```gleam
-/// import gleam/json
-/// import squirtle
-///
-/// json.parse("{\"name\": \"John\"}", squirtle.json_value_decoder())
+/// let assert Ok(doc) = squirtle.parse("{\"name\": \"John\"}")
+/// let patches = [
+///   squirtle.Replace(path: "/name", value: squirtle.String("Jane")),
+///   squirtle.Add(path: "/age", value: squirtle.Int(30)),
+/// ]
+/// squirtle.apply(doc, patches)
 /// // => Ok(Object(...))
 /// ```
-pub fn json_value_decoder() -> decode.Decoder(JsonValue) {
-  use <- decode.recursive
-  decode.one_of(string(), [
-    int(),
-    bool(),
-    float(),
-    array(),
-    object(),
-    null(),
-  ])
+pub fn apply(doc: Doc, patches: List(Patch)) -> Result(Doc, PatchError) {
+  apply_loop(doc, patches)
 }
 
-/// Parse a JSON string into a JsonValue
+/// Generate a list of patches that transform one document into another.
+///
+/// The returned patches, when applied to `from`, will produce `to`.
 ///
 /// ## Example
 ///
 /// ```gleam
-/// import squirtle
+/// let from = squirtle.Object(dict.from_list([
+///   #("name", squirtle.String("John")),
+/// ]))
+/// let to = squirtle.Object(dict.from_list([
+///   #("name", squirtle.String("Jane")),
+///   #("age", squirtle.Int(30)),
+/// ]))
 ///
+/// squirtle.diff(from, to)
+/// // => [Replace("/name", String("Jane")), Add("/age", Int(30))]
+/// ```
+pub fn diff(from from: Doc, to to: Doc) -> List(Patch) {
+  diff_values(from, to, "")
+}
+
+/// Parse a JSON string into a Doc.
+///
+/// ## Example
+///
+/// ```gleam
 /// squirtle.parse("{\"name\": \"John\", \"age\": 30}")
 /// // => Ok(Object(...))
 /// ```
-pub fn json_value_parse(raw: String) -> Result(JsonValue, json.DecodeError) {
-  json.parse(raw, json_value_decoder())
+pub fn parse(json_string: String) -> Result(Doc, json.DecodeError) {
+  json.parse(json_string, decoder())
 }
 
-/// Convert a JsonValue to a Dynamic value
-///
-/// This is useful when you need to use the value with Gleam's dynamic decoding functions.
+/// Parse a JSON array of patch operations from a string.
 ///
 /// ## Example
 ///
 /// ```gleam
-/// import squirtle
-///
-/// let value = squirtle.String("hello")
-/// squirtle.json_value_to_dynamic(value)
+/// squirtle.parse_patches("[{\"op\": \"add\", \"path\": \"/name\", \"value\": \"John\"}]")
+/// // => Ok([Add("/name", String("John"))])
 /// ```
-pub fn json_value_to_dynamic(value: JsonValue) {
-  case value {
-    String(s) -> dynamic.string(s)
-    Int(i) -> dynamic.int(i)
-    Bool(b) -> dynamic.bool(b)
-    Float(f) -> dynamic.float(f)
-    Array(arr) -> dynamic.list(arr |> list.map(json_value_to_dynamic))
-    Null -> dynamic.nil()
-    Object(obj) -> {
-      let d =
-        obj
-        |> dict.to_list
-        |> list.map(fn(p) {
-          p
-          |> pair.map_first(dynamic.string)
-          |> pair.map_second(json_value_to_dynamic)
-        })
-
-      dynamic.properties(d)
-    }
-  }
+pub fn parse_patches(
+  json_string: String,
+) -> Result(List(Patch), json.DecodeError) {
+  json.parse(json_string, decode.list(patch_decoder()))
 }
 
-/// Decode a JsonValue using a custom decoder
-///
-/// This allows you to decode a JsonValue into a specific Gleam type.
+/// Convert a Doc to a JSON string.
 ///
 /// ## Example
 ///
 /// ```gleam
-/// import gleam/dynamic/decode
-/// import squirtle
-///
-/// let value = squirtle.Object(...)
-/// squirtle.json_value_decode(value, decode.field("name", decode.string))
-/// // => Ok("John")
+/// let doc = squirtle.Object(dict.from_list([#("name", squirtle.String("John"))]))
+/// squirtle.to_string(doc)
+/// // => "{\"name\":\"John\"}"
 /// ```
-pub fn json_value_decode(value: JsonValue, decoder: decode.Decoder(a)) {
-  json_value_to_dynamic(value) |> decode.run(decoder)
+pub fn to_string(doc: Doc) -> String {
+  doc |> to_json |> json.to_string
 }
 
-/// Convert a JsonValue to `gleam/json`'s Json type
+/// Convert a Doc to gleam/json's Json type.
 ///
-/// This is useful when you need to work with the standard library's JSON functions.
-///
-/// ## Example
-///
-/// ```gleam
-/// import squirtle
-///
-/// let value = squirtle.String("hello")
-/// squirtle.json_value_to_gleam_json(value)
-/// ```
-pub fn json_value_to_gleam_json(value: JsonValue) -> json.Json {
-  case value {
+/// Useful when you need to integrate with code that uses the standard library.
+pub fn to_json(doc: Doc) -> json.Json {
+  case doc {
     String(s) -> json.string(s)
     Int(i) -> json.int(i)
     Bool(b) -> json.bool(b)
     Float(f) -> json.float(f)
-    Array(arr) -> json.array(arr, json_value_to_gleam_json)
-    Object(obj) -> json.dict(obj, function.identity, json_value_to_gleam_json)
+    Array(arr) -> json.array(arr, to_json)
+    Object(obj) -> json.dict(obj, function.identity, to_json)
     Null -> json.null()
   }
 }
 
-/// Convert a JsonValue to a JSON string
+/// Convert a single patch to a JSON string.
+pub fn patch_to_string(patch: Patch) -> String {
+  patch |> patch_to_doc |> to_string
+}
+
+/// Convert a list of patches to a JSON array string.
 ///
 /// ## Example
 ///
 /// ```gleam
-/// import squirtle
-///
-/// let value = squirtle.Object(...)
-/// squirtle.json_value_to_string(value)
-/// // => "{\"name\":\"John\"}"
+/// let patches = [
+///   squirtle.Add(path: "/name", value: squirtle.String("John")),
+/// ]
+/// squirtle.patches_to_string(patches)
+/// // => "[{\"op\":\"add\",\"path\":\"/name\",\"value\":\"John\"}]"
 /// ```
-pub fn json_value_to_string(value: JsonValue) -> String {
-  value |> json_value_to_gleam_json |> json.to_string
+pub fn patches_to_string(patches: List(Patch)) -> String {
+  patches
+  |> list.map(patch_to_doc)
+  |> Array
+  |> to_string
 }
 
-/// A JSON Patch operation
-/// Represents one of the six operations defined in RFC 6902:
-pub type Patch {
-  /// Add a value at a path
-  Add(path: String, value: JsonValue)
-  /// Remove a value at a path
-  Remove(path: String)
-  /// Replace a value at a path
-  Replace(path: String, value: JsonValue)
-  /// Copy a value from one path to another
-  Copy(from: String, path: String)
-  /// Move a value from one path to another
-  Move(from: String, path: String)
-  /// Test that a value at a path equals an expected value
-  Test(path: String, value: JsonValue)
+/// Convert a patch to its Doc representation (for custom serialization).
+pub fn patch_to_doc(patch: Patch) -> Doc {
+  case patch {
+    Add(path, value) ->
+      Object(
+        dict.from_list([
+          #("op", String("add")),
+          #("path", String(path)),
+          #("value", value),
+        ]),
+      )
+    Remove(path) ->
+      Object(dict.from_list([#("op", String("remove")), #("path", String(path))]))
+    Replace(path, value) ->
+      Object(
+        dict.from_list([
+          #("op", String("replace")),
+          #("path", String(path)),
+          #("value", value),
+        ]),
+      )
+    Copy(from, to) ->
+      Object(
+        dict.from_list([
+          #("op", String("copy")),
+          #("from", String(from)),
+          #("path", String(to)),
+        ]),
+      )
+    Move(from, to) ->
+      Object(
+        dict.from_list([
+          #("op", String("move")),
+          #("from", String(from)),
+          #("path", String(to)),
+        ]),
+      )
+    Test(path, expect) ->
+      Object(
+        dict.from_list([
+          #("op", String("test")),
+          #("path", String(path)),
+          #("value", expect),
+        ]),
+      )
+  }
 }
 
-/// Returns a decoder for parsing JSON into a Patch operation
+/// Decoder for parsing JSON into a Doc.
 ///
-/// This decoder parses a single patch operation from JSON according to RFC 6902.
-///
-/// ## Example
-///
-/// ```gleam
-/// import gleam/json
-/// import squirtle
-///
-/// json.parse("{\"op\": \"add\", \"path\": \"/name\", \"value\": \"John\"}",
-///            squirtle.patch_decoder())
-/// // => Ok(Add("/name", String("John")))
-/// ```
+/// Use this with gleam/json.parse for custom parsing needs.
+pub fn decoder() -> decode.Decoder(Doc) {
+  use <- decode.recursive
+  decode.one_of(str_decoder(), [
+    int_decoder(),
+    bool_decoder(),
+    float_decoder(),
+    array_decoder(),
+    object_decoder(),
+    null_decoder(),
+  ])
+}
+
+/// Decoder for parsing a single patch operation.
 pub fn patch_decoder() -> decode.Decoder(Patch) {
   use op <- decode.field("op", decode.string)
 
   case op {
     "add" -> {
       use path <- decode.field("path", decode.string)
-      use value <- decode.field("value", json_value_decoder())
+      use value <- decode.field("value", decoder())
       decode.success(Add(path:, value:))
     }
 
@@ -256,56 +279,118 @@ pub fn patch_decoder() -> decode.Decoder(Patch) {
 
     "replace" -> {
       use path <- decode.field("path", decode.string)
-      use value <- decode.field("value", json_value_decoder())
+      use value <- decode.field("value", decoder())
       decode.success(Replace(path:, value:))
     }
 
     "copy" -> {
       use from <- decode.field("from", decode.string)
-      use path <- decode.field("path", decode.string)
-      decode.success(Copy(from:, path:))
+      use to <- decode.field("path", decode.string)
+      decode.success(Copy(from:, to:))
     }
 
     "move" -> {
       use from <- decode.field("from", decode.string)
-      use path <- decode.field("path", decode.string)
-      decode.success(Move(from:, path:))
+      use to <- decode.field("path", decode.string)
+      decode.success(Move(from:, to:))
     }
 
     "test" -> {
       use path <- decode.field("path", decode.string)
-      use value <- decode.field("value", json_value_decoder())
-      decode.success(Test(path:, value:))
+      use expect <- decode.field("value", decoder())
+      decode.success(Test(path:, expect:))
     }
 
     _ -> decode.failure(Copy("", ""), "Unknown op: '" <> op <> "'")
   }
 }
 
-/// Apply a list of patch operations to a JSON document
+fn str_decoder() -> decode.Decoder(Doc) {
+  decode.string |> decode.map(String)
+}
+
+fn int_decoder() -> decode.Decoder(Doc) {
+  decode.int |> decode.map(Int)
+}
+
+fn bool_decoder() -> decode.Decoder(Doc) {
+  decode.bool |> decode.map(Bool)
+}
+
+fn float_decoder() -> decode.Decoder(Doc) {
+  decode.float |> decode.map(Float)
+}
+
+fn array_decoder() -> decode.Decoder(Doc) {
+  decode.list(decoder()) |> decode.map(Array)
+}
+
+fn object_decoder() -> decode.Decoder(Doc) {
+  decode.dict(decode.string, decoder()) |> decode.map(Object)
+}
+
+fn null_decoder() -> decode.Decoder(Doc) {
+  decode.success(Null)
+}
+
+/// Convert a Doc to a Dynamic value.
 ///
-/// Applies all patches in order, returning the modified document or an error if any patch fails.
-/// All patches must succeed for the operation to succeed.
+/// Useful when you need to decode a Doc into a custom Gleam type
+/// using gleam/dynamic/decode.
+pub fn to_dynamic(doc: Doc) -> dynamic.Dynamic {
+  case doc {
+    String(s) -> dynamic.string(s)
+    Int(i) -> dynamic.int(i)
+    Bool(b) -> dynamic.bool(b)
+    Float(f) -> dynamic.float(f)
+    Array(arr) -> dynamic.list(arr |> list.map(to_dynamic))
+    Null -> dynamic.nil()
+    Object(obj) -> {
+      obj
+      |> dict.to_list
+      |> list.map(fn(p) {
+        p
+        |> pair.map_first(dynamic.string)
+        |> pair.map_second(to_dynamic)
+      })
+      |> dynamic.properties
+    }
+  }
+}
+
+/// Decode a Doc into a custom type using a decoder.
 ///
 /// ## Example
 ///
 /// ```gleam
-/// import squirtle
-///
-/// let assert Ok(doc) = squirtle.parse("{\"name\": \"John\"}")
-/// let patches = [
-///   squirtle.Replace(path: "/name", value: squirtle.String("Jane")),
-///   squirtle.Add(path: "/age", value: squirtle.Int(30)),
-/// ]
-///
-/// squirtle.patch(doc, patches)
-/// // => Ok(Object(...))
+/// let doc = squirtle.Object(dict.from_list([#("name", squirtle.String("John"))]))
+/// squirtle.decode(doc, decode.field("name", decode.string))
+/// // => Ok("John")
 /// ```
-pub fn patch(data: JsonValue, patches: List(Patch)) {
-  do_patch_iter(data, patches)
+pub fn decode(
+  doc: Doc,
+  with decoder: decode.Decoder(a),
+) -> Result(a, List(decode.DecodeError)) {
+  to_dynamic(doc) |> decode.run(decoder)
 }
 
-fn parse_path(path: String) -> Result(List(String), String) {
+/// Convert a PatchError to a human-readable string.
+pub fn error_to_string(error: PatchError) -> String {
+  case error {
+    PathNotFound(path) -> "Path not found: " <> path
+    InvalidIndex(path, index) ->
+      "Invalid array index '" <> index <> "' at " <> path
+    IndexOutOfBounds(path, index) ->
+      "Array index " <> int.to_string(index) <> " out of bounds at " <> path
+    NotAContainer(path) ->
+      "Cannot navigate into non-object/non-array at " <> path
+    CannotRemoveRoot -> "Cannot remove root document"
+    TestFailed(path, _, _) -> "Test failed at " <> path
+    InvalidPath(reason) -> "Invalid path: " <> reason
+  }
+}
+
+fn parse_path(path: String) -> Result(List(String), PatchError) {
   case path {
     "" -> Ok([])
     "/" <> rest -> {
@@ -313,7 +398,7 @@ fn parse_path(path: String) -> Result(List(String), String) {
       |> list.map(decode_pointer_token)
       |> Ok
     }
-    _ -> Error("Invalid JSON Pointer: must start with /")
+    _ -> Error(InvalidPath("JSON Pointer must start with /"))
   }
 }
 
@@ -329,13 +414,6 @@ fn encode_pointer_token(token: String) -> String {
   |> string.replace("/", "~1")
 }
 
-fn has_leading_zero(s: String) -> Bool {
-  case s {
-    "0" <> rest -> string.length(rest) > 0
-    _ -> False
-  }
-}
-
 fn get_at_index(lst: List(a), index: Int) -> Result(a, Nil) {
   case index, lst {
     _, [] -> Error(Nil)
@@ -345,51 +423,46 @@ fn get_at_index(lst: List(a), index: Int) -> Result(a, Nil) {
   }
 }
 
-fn get_value(data: JsonValue, path: String) -> Result(JsonValue, String) {
-  use tokens <- result.try(parse_path(path))
-  navigate_get(data, tokens)
-}
-
-fn navigate_get(
-  data: JsonValue,
-  tokens: List(String),
-) -> Result(JsonValue, String) {
-  case tokens {
-    [] -> Ok(data)
-    [token, ..rest] -> {
-      case data {
-        Object(dict) -> {
-          use value <- result.try(
-            dict.get(dict, token)
-            |> result.replace_error("path /" <> token <> " does not exist"),
-          )
-          navigate_get(value, rest)
-        }
-        Array(elements) -> {
-          case has_leading_zero(token) {
-            True -> Error("invalid array index: " <> token)
-            False -> {
-              use index <- result.try(
-                int.parse(token)
-                |> result.replace_error("invalid array index: " <> token),
-              )
-              use value <- result.try(
-                get_at_index(elements, index)
-                |> result.replace_error("array index out of bounds: " <> token),
-              )
-              navigate_get(value, rest)
-            }
-          }
-        }
-        _ -> Error("cannot navigate into non-object/non-array")
+fn parse_array_index(token: String, path: String) -> Result(Int, PatchError) {
+  case token {
+    "0" <> rest ->
+      case rest {
+        "" -> Ok(0)
+        _ -> Error(InvalidIndex(path, token))
       }
-    }
+    _ ->
+      int.parse(token)
+      |> result.replace_error(InvalidIndex(path, token))
   }
 }
 
-fn add(data: JsonValue, path: String, value: JsonValue) {
-  use tokens <- result.try(parse_path(path))
-  navigate_set(data, tokens, value, AddMode, True)
+fn get_value(doc: Doc, path: String) -> Result(Doc, PatchError) {
+  parse_path(path)
+  |> result.try(navigate_get(doc, _, path))
+}
+
+fn navigate_get(
+  doc: Doc,
+  tokens: List(String),
+  path: String,
+) -> Result(Doc, PatchError) {
+  case tokens {
+    [] -> Ok(doc)
+    [token, ..rest] ->
+      case doc {
+        Object(d) ->
+          dict.get(d, token)
+          |> result.replace_error(PathNotFound(path))
+          |> result.try(navigate_get(_, rest, path))
+        Array(elements) -> {
+          use index <- result.try(parse_array_index(token, path))
+          get_at_index(elements, index)
+          |> result.replace_error(IndexOutOfBounds(path, index))
+          |> result.try(navigate_get(_, rest, path))
+        }
+        _ -> Error(NotAContainer(path))
+      }
+  }
 }
 
 type SetMode {
@@ -397,107 +470,184 @@ type SetMode {
   ReplaceMode
 }
 
+fn apply_loop(acc: Doc, patches: List(Patch)) -> Result(Doc, PatchError) {
+  case patches {
+    [] -> Ok(acc)
+    [patch, ..rest] ->
+      case patch {
+        Add(path, value) -> do_add(acc, path, value)
+        Remove(path) -> do_remove(acc, path)
+        Replace(path, value) -> do_replace(acc, path, value)
+        Copy(from, to) -> do_copy(acc, from, to)
+        Move(from, to) -> do_move(acc, from, to)
+        Test(path, expect) -> do_test(acc, path, expect)
+      }
+      |> result.try(apply_loop(_, rest))
+  }
+}
+
+fn do_add(doc: Doc, path: String, value: Doc) -> Result(Doc, PatchError) {
+  use tokens <- result.try(parse_path(path))
+  navigate_set(doc, tokens, value, AddMode, path)
+}
+
+fn do_replace(doc: Doc, path: String, value: Doc) -> Result(Doc, PatchError) {
+  use tokens <- result.try(parse_path(path))
+  navigate_set(doc, tokens, value, ReplaceMode, path)
+}
+
+fn do_remove(doc: Doc, path: String) -> Result(Doc, PatchError) {
+  use tokens <- result.try(parse_path(path))
+  navigate_remove(doc, tokens, path)
+}
+
+fn do_copy(doc: Doc, from: String, to: String) -> Result(Doc, PatchError) {
+  get_value(doc, from)
+  |> result.try(do_add(doc, to, _))
+}
+
+fn do_move(doc: Doc, from: String, to: String) -> Result(Doc, PatchError) {
+  get_value(doc, from)
+  |> result.try(fn(from_value) {
+    do_remove(doc, from)
+    |> result.try(do_add(_, to, from_value))
+  })
+}
+
+fn do_test(doc: Doc, path: String, expect: Doc) -> Result(Doc, PatchError) {
+  use actual <- result.try(get_value(doc, path))
+  case actual == expect {
+    True -> Ok(doc)
+    False -> Error(TestFailed(path, expect, actual))
+  }
+}
+
 fn navigate_set(
-  data: JsonValue,
+  doc: Doc,
   tokens: List(String),
-  value: JsonValue,
+  value: Doc,
   mode: SetMode,
-  is_add: Bool,
-) -> Result(JsonValue, String) {
+  original_path: String,
+) -> Result(Doc, PatchError) {
   case tokens {
     [] -> Ok(value)
-    [token] -> navigate_set_final(data, token, value, mode)
+    [token] -> navigate_set_final(doc, token, value, mode, original_path)
     [token, ..rest] ->
-      navigate_set_recursive(data, token, rest, value, mode, is_add)
+      navigate_set_recursive(doc, token, rest, value, mode, original_path)
   }
 }
 
 fn navigate_set_final(
-  data: JsonValue,
+  doc: Doc,
   token: String,
-  value: JsonValue,
+  value: Doc,
   mode: SetMode,
-) -> Result(JsonValue, String) {
-  case data {
+  path: String,
+) -> Result(Doc, PatchError) {
+  case doc {
     Object(d) -> Ok(Object(dict.insert(d, token, value)))
     Array(elements) if token == "-" -> Ok(Array(list.append(elements, [value])))
-    Array(elements) -> {
-      case has_leading_zero(token) {
-        True -> Error("invalid array index: " <> token)
-        False -> {
-          use index <- result.try(
-            int.parse(token)
-            |> result.replace_error("invalid array index: " <> token),
-          )
-          use new_array <- result.try(insert_at_index(
-            elements,
-            index,
-            value,
-            mode,
-          ))
-          Ok(Array(new_array))
-        }
-      }
-    }
-    _ -> Error("cannot add to non-object/non-array")
+    Array(elements) ->
+      parse_array_index(token, path)
+      |> result.try(fn(index) {
+        insert_at_index(elements, index, value, mode)
+        |> result.replace_error(IndexOutOfBounds(path, index))
+      })
+      |> result.map(Array)
+    _ -> Error(NotAContainer(path))
   }
 }
 
 fn navigate_set_recursive(
-  data: JsonValue,
+  doc: Doc,
   token: String,
   rest: List(String),
-  value: JsonValue,
+  value: Doc,
   mode: SetMode,
-  is_add: Bool,
-) -> Result(JsonValue, String) {
-  case data {
-    Object(d) -> {
-      use nested <- result.try(
-        dict.get(d, token)
-        |> result.replace_error(case is_add {
-          True -> "add to a non-existent target"
-          False -> "path does not exist"
-        }),
-      )
-      use new_nested <- result.try(navigate_set(
-        nested,
-        rest,
-        value,
-        mode,
-        is_add,
-      ))
-      Ok(Object(dict.insert(d, token, new_nested)))
-    }
-    Array(elements) -> {
-      case has_leading_zero(token) {
-        True -> Error("invalid array index: " <> token)
-        False -> {
-          use index <- result.try(
-            int.parse(token)
-            |> result.replace_error("invalid array index: " <> token),
-          )
-          use nested <- result.try(
-            get_at_index(elements, index)
-            |> result.replace_error("array index out of bounds: " <> token),
-          )
-          use new_nested <- result.try(navigate_set(
-            nested,
-            rest,
-            value,
-            mode,
-            is_add,
-          ))
-          use new_array <- result.try(replace_at_index(
-            elements,
-            index,
-            new_nested,
-          ))
-          Ok(Array(new_array))
-        }
+  path: String,
+) -> Result(Doc, PatchError) {
+  case doc {
+    Object(d) ->
+      dict.get(d, token)
+      |> result.replace_error(PathNotFound(path))
+      |> result.try(navigate_set(_, rest, value, mode, path))
+      |> result.map(fn(new) { Object(dict.insert(d, token, new)) })
+    Array(elements) ->
+      parse_array_index(token, path)
+      |> result.try(fn(index) {
+        get_at_index(elements, index)
+        |> result.replace_error(IndexOutOfBounds(path, index))
+        |> result.try(navigate_set(_, rest, value, mode, path))
+        |> result.try(fn(new) {
+          replace_at_index(elements, index, new)
+          |> result.replace_error(IndexOutOfBounds(path, index))
+        })
+      })
+      |> result.map(Array)
+    _ -> Error(NotAContainer(path))
+  }
+}
+
+fn navigate_remove(
+  doc: Doc,
+  tokens: List(String),
+  original_path: String,
+) -> Result(Doc, PatchError) {
+  case tokens {
+    [] -> Error(CannotRemoveRoot)
+    [token] -> navigate_remove_final(doc, token, original_path)
+    [token, ..rest] ->
+      navigate_remove_recursive(doc, token, rest, original_path)
+  }
+}
+
+fn navigate_remove_final(
+  doc: Doc,
+  token: String,
+  path: String,
+) -> Result(Doc, PatchError) {
+  case doc {
+    Object(d) ->
+      case dict.has_key(d, token) {
+        True -> Ok(Object(dict.delete(d, token)))
+        False -> Error(PathNotFound(path))
       }
-    }
-    _ -> Error("cannot navigate into non-object/non-array")
+    Array(elements) ->
+      parse_array_index(token, path)
+      |> result.try(fn(index) {
+        remove_at_index(elements, index)
+        |> result.replace_error(IndexOutOfBounds(path, index))
+      })
+      |> result.map(Array)
+    _ -> Error(NotAContainer(path))
+  }
+}
+
+fn navigate_remove_recursive(
+  doc: Doc,
+  token: String,
+  rest: List(String),
+  path: String,
+) -> Result(Doc, PatchError) {
+  case doc {
+    Object(d) ->
+      dict.get(d, token)
+      |> result.replace_error(PathNotFound(path))
+      |> result.try(navigate_remove(_, rest, path))
+      |> result.map(fn(new) { Object(dict.insert(d, token, new)) })
+    Array(elements) ->
+      parse_array_index(token, path)
+      |> result.try(fn(index) {
+        get_at_index(elements, index)
+        |> result.replace_error(IndexOutOfBounds(path, index))
+        |> result.try(navigate_remove(_, rest, path))
+        |> result.try(fn(new) {
+          replace_at_index(elements, index, new)
+          |> result.replace_error(IndexOutOfBounds(path, index))
+        })
+      })
+      |> result.map(Array)
+    _ -> Error(NotAContainer(path))
   }
 }
 
@@ -506,7 +656,7 @@ fn insert_at_index(
   index: Int,
   value: a,
   mode: SetMode,
-) -> Result(List(a), String) {
+) -> Result(List(a), Nil) {
   case mode {
     AddMode -> do_insert_at_index(lst, index, value, 0)
     ReplaceMode -> replace_at_index(lst, index, value)
@@ -518,7 +668,7 @@ fn do_insert_at_index(
   index: Int,
   value: a,
   current: Int,
-) -> Result(List(a), String) {
+) -> Result(List(a), Nil) {
   case index == current, lst {
     True, rest -> Ok([value, ..rest])
     False, [first, ..rest] ->
@@ -526,15 +676,11 @@ fn do_insert_at_index(
         Ok(new_rest) -> Ok([first, ..new_rest])
         Error(e) -> Error(e)
       }
-    False, [] -> Error("array index out of bounds")
+    False, [] -> Error(Nil)
   }
 }
 
-fn replace_at_index(
-  lst: List(a),
-  index: Int,
-  value: a,
-) -> Result(List(a), String) {
+fn replace_at_index(lst: List(a), index: Int, value: a) -> Result(List(a), Nil) {
   do_replace_at_index(lst, index, value, 0)
 }
 
@@ -543,7 +689,7 @@ fn do_replace_at_index(
   index: Int,
   value: a,
   current: Int,
-) -> Result(List(a), String) {
+) -> Result(List(a), Nil) {
   case index == current, lst {
     True, [_, ..rest] -> Ok([value, ..rest])
     False, [first, ..rest] ->
@@ -551,86 +697,11 @@ fn do_replace_at_index(
         Ok(new_rest) -> Ok([first, ..new_rest])
         Error(e) -> Error(e)
       }
-    _, [] -> Error("array index out of bounds")
+    _, [] -> Error(Nil)
   }
 }
 
-fn remove(data: JsonValue, path: String) {
-  use tokens <- result.try(parse_path(path))
-  navigate_remove(data, tokens)
-}
-
-fn navigate_remove(
-  data: JsonValue,
-  tokens: List(String),
-) -> Result(JsonValue, String) {
-  case tokens {
-    [] -> Error("cannot remove root")
-    [token] -> navigate_remove_final(data, token)
-    [token, ..rest] -> navigate_remove_recursive(data, token, rest)
-  }
-}
-
-fn navigate_remove_final(
-  data: JsonValue,
-  token: String,
-) -> Result(JsonValue, String) {
-  case data {
-    Object(d) -> {
-      case dict.has_key(d, token) {
-        True -> Ok(Object(dict.delete(d, token)))
-        False -> Error("path does not exist")
-      }
-    }
-    Array(elements) -> {
-      case has_leading_zero(token) {
-        True -> Error("invalid array index: " <> token)
-        False -> {
-          use index <- result.try(
-            int.parse(token)
-            |> result.replace_error("invalid array index: " <> token),
-          )
-          use new_array <- result.try(remove_at_index(elements, index))
-          Ok(Array(new_array))
-        }
-      }
-    }
-    _ -> Error("cannot remove from non-object/non-array")
-  }
-}
-
-fn navigate_remove_recursive(
-  data: JsonValue,
-  token: String,
-  rest: List(String),
-) -> Result(JsonValue, String) {
-  case data {
-    Object(d) -> {
-      use nested <- result.try(
-        dict.get(d, token)
-        |> result.replace_error("path does not exist"),
-      )
-      use new_nested <- result.try(navigate_remove(nested, rest))
-      Ok(Object(dict.insert(d, token, new_nested)))
-    }
-    Array(elements) -> {
-      use index <- result.try(
-        int.parse(token)
-        |> result.replace_error("invalid array index: " <> token),
-      )
-      use nested <- result.try(
-        get_at_index(elements, index)
-        |> result.replace_error("array index out of bounds: " <> token),
-      )
-      use new_nested <- result.try(navigate_remove(nested, rest))
-      use new_array <- result.try(replace_at_index(elements, index, new_nested))
-      Ok(Array(new_array))
-    }
-    _ -> Error("cannot navigate into non-object/non-array")
-  }
-}
-
-fn remove_at_index(lst: List(a), index: Int) -> Result(List(a), String) {
+fn remove_at_index(lst: List(a), index: Int) -> Result(List(a), Nil) {
   do_remove_at_index(lst, index, 0)
 }
 
@@ -638,7 +709,7 @@ fn do_remove_at_index(
   lst: List(a),
   index: Int,
   current: Int,
-) -> Result(List(a), String) {
+) -> Result(List(a), Nil) {
   case index == current, lst {
     True, [_, ..rest] -> Ok(rest)
     False, [first, ..rest] ->
@@ -646,105 +717,62 @@ fn do_remove_at_index(
         Ok(new_rest) -> Ok([first, ..new_rest])
         Error(e) -> Error(e)
       }
-    _, [] -> Error("array index out of bounds")
+    _, [] -> Error(Nil)
   }
 }
 
-fn replace(data: JsonValue, path: String, value: JsonValue) {
-  use tokens <- result.try(parse_path(path))
-  navigate_set(data, tokens, value, ReplaceMode, False)
-}
-
-fn copy(data: JsonValue, from: String, path: String) {
-  use from_value <- result.try(get_value(data, from))
-  add(data, path, from_value)
-}
-
-fn move(data: JsonValue, from: String, path: String) {
-  use from_value <- result.try(get_value(data, from))
-  use after_remove <- result.try(remove(data, from))
-  add(after_remove, path, from_value)
-}
-
-fn test_(data: JsonValue, path: String, value: JsonValue) {
-  use found_value <- result.try(get_value(data, path))
-  case found_value == value {
-    True -> Ok(data)
-    False -> Error("values not equivalent")
+fn diff_values(from: Doc, to: Doc, path: String) -> List(Patch) {
+  case from == to {
+    True -> []
+    False ->
+      case from, to {
+        Object(from_obj), Object(to_obj) -> diff_objects(from_obj, to_obj, path)
+        Array(from_arr), Array(to_arr) -> diff_arrays(from_arr, to_arr, path)
+        _, _ -> [Replace(path: path, value: to)]
+      }
   }
 }
 
-fn do_patch_iter(acc: JsonValue, patches: List(Patch)) {
-  case patches {
-    [] -> Ok(acc)
-    [patch, ..rest] -> {
-      use next <- result.try(case patch {
-        Add(path, value) -> add(acc, path, value)
-        Remove(path) -> remove(acc, path)
-        Replace(path, value) -> replace(acc, path, value)
-        Copy(from, path) -> copy(acc, from, path)
-        Move(from, path) -> move(acc, from, path)
-        Test(path, value) -> test_(acc, path, value)
-      })
+fn diff_objects(
+  from: Dict(String, Doc),
+  to: Dict(String, Doc),
+  path: String,
+) -> List(Patch) {
+  let from_keys = dict.keys(from) |> set.from_list
+  let to_keys = dict.keys(to) |> set.from_list
 
-      do_patch_iter(next, rest)
-    }
-  }
+  let removed = set.difference(from_keys, to_keys)
+  let remove_patches =
+    set.to_list(removed)
+    |> list.map(fn(key) {
+      Remove(path: path <> "/" <> encode_pointer_token(key))
+    })
+
+  let added = set.difference(to_keys, from_keys)
+  let add_patches =
+    set.to_list(added)
+    |> list.map(fn(key) {
+      let assert Ok(value) = dict.get(to, key)
+      Add(path: path <> "/" <> encode_pointer_token(key), value: value)
+    })
+
+  let common = set.intersection(from_keys, to_keys)
+  let change_patches =
+    set.to_list(common)
+    |> list.flat_map(fn(key) {
+      let assert Ok(from_value) = dict.get(from, key)
+      let assert Ok(to_value) = dict.get(to, key)
+      diff_values(
+        from_value,
+        to_value,
+        path <> "/" <> encode_pointer_token(key),
+      )
+    })
+
+  list.flatten([remove_patches, add_patches, change_patches])
 }
 
-/// Parse and apply JSON patches to a JSON document, both provided as strings
-///
-/// This is a convenience function that combines parsing, patching, and stringifying.
-/// Returns the patched document as a JSON string.
-///
-/// ## Example
-///
-/// ```gleam
-/// import squirtle
-///
-/// let doc = "{\"name\":\"John\",\"age\":30}"
-/// let patches = "[{\"op\":\"replace\",\"path\":\"/name\",\"value\":\"Jane\"}]"
-///
-/// squirtle.patch_string(doc, patches)
-/// // => Ok("{\"name\":\"Jane\",\"age\":30}")
-/// ```
-pub fn patch_string(data: String, patches: String) -> Result(String, String) {
-  use doc <- result.try(
-    json_value_parse(data)
-    |> result.map_error(fn(e) {
-      "Failed to parse document: " <> string.inspect(e)
-    }),
-  )
-  use patch_list <- result.try(
-    json.parse(patches, decode.list(patch_decoder()))
-    |> result.map_error(fn(e) {
-      "Failed to parse patches: " <> string.inspect(e)
-    }),
-  )
-  use patched <- result.try(patch(doc, patch_list))
-  Ok(json_value_to_string(patched))
-}
-
-/// Parse a JSON array of patch operations from a string
-///
-/// ## Example
-///
-/// ```gleam
-/// import squirtle
-///
-/// let patches_json = "[
-///   {\"op\": \"add\", \"path\": \"/name\", \"value\": \"John\"},
-///   {\"op\": \"remove\", \"path\": \"/age\"}
-/// ]"
-///
-/// squirtle.parse_patches(patches_json)
-/// // => Ok([Add("/name", String("John")), Remove("/age")])
-/// ```
-pub fn parse_patches(patches: String) -> Result(List(Patch), json.DecodeError) {
-  json.parse(patches, decode.list(patch_decoder()))
-}
-
-fn diff_arrays(from: JsonArray, to: JsonArray, path: String) -> List(Patch) {
+fn diff_arrays(from: List(Doc), to: List(Doc), path: String) -> List(Patch) {
   let from_len = list.length(from)
   let to_len = list.length(to)
   let min_len = case from_len < to_len {
@@ -758,7 +786,7 @@ fn diff_arrays(from: JsonArray, to: JsonArray, path: String) -> List(Patch) {
       |> list.flat_map(fn(idx) {
         let assert Ok(from_val) = get_at_index(from, idx)
         let assert Ok(to_val) = get_at_index(to, idx)
-        do_diff(from_val, to_val, path <> "/" <> int.to_string(idx))
+        diff_values(from_val, to_val, path <> "/" <> int.to_string(idx))
       })
     False -> []
   }
@@ -784,188 +812,4 @@ fn diff_arrays(from: JsonArray, to: JsonArray, path: String) -> List(Patch) {
   }
 
   list.flatten([change_patches, add_patches, remove_patches])
-}
-
-fn diff_objects(from: JsonDict, to: JsonDict, path: String) -> List(Patch) {
-  let from_keys = dict.keys(from) |> set.from_list
-  let to_keys = dict.keys(to) |> set.from_list
-
-  let removed = set.difference(from_keys, to_keys)
-  let remove_patches =
-    set.to_list(removed)
-    |> list.map(fn(key) {
-      Remove(path: path <> "/" <> encode_pointer_token(key))
-    })
-
-  let added = set.difference(to_keys, from_keys)
-  let add_patches =
-    set.to_list(added)
-    |> list.map(fn(key) {
-      let assert Ok(value) = dict.get(to, key)
-      Add(path: path <> "/" <> encode_pointer_token(key), value: value)
-    })
-
-  let common = set.intersection(from_keys, to_keys)
-  let change_patches =
-    set.to_list(common)
-    |> list.flat_map(fn(key) {
-      let assert Ok(from_value) = dict.get(from, key)
-      let assert Ok(to_value) = dict.get(to, key)
-      do_diff(from_value, to_value, path <> "/" <> encode_pointer_token(key))
-    })
-
-  list.flatten([remove_patches, add_patches, change_patches])
-}
-
-fn do_diff(from: JsonValue, to: JsonValue, path: String) -> List(Patch) {
-  case from == to {
-    True -> []
-    False ->
-      case from, to {
-        Object(from_obj), Object(to_obj) -> diff_objects(from_obj, to_obj, path)
-        Array(from_arr), Array(to_arr) -> diff_arrays(from_arr, to_arr, path)
-        _, _ -> [Replace(path: path, value: to)]
-      }
-  }
-}
-
-/// Generate a list of patch operations that transform one JSON value into another
-///
-/// This function compares two JsonValues and produces the minimal set of patches
-/// that, when applied to the first value, will produce the second value.
-///
-/// ## Example
-///
-/// ```gleam
-/// import gleam/dict
-/// import squirtle
-///
-/// let doc1 = squirtle.Object(dict.from_list([
-///   #("name", squirtle.String("John")),
-///   #("age", squirtle.Int(30))
-/// ]))
-///
-/// let doc2 = squirtle.Object(dict.from_list([
-///   #("name", squirtle.String("Jane")),
-///   #("age", squirtle.Int(30)),
-///   #("email", squirtle.String("jane@example.com"))
-/// ]))
-///
-/// let patches = squirtle.diff(doc1, doc2)
-/// // => [
-/// //   Replace(path: "/name", value: String("Jane")),
-/// //   Add(path: "/email", value: String("jane@example.com"))
-/// // ]
-///
-/// squirtle.patch(doc1, patches)
-/// // => Ok(doc2)
-/// ```
-pub fn diff(from: JsonValue, to: JsonValue) -> List(Patch) {
-  do_diff(from, to, "")
-}
-
-/// Convert a Patch operation to a JsonValue
-///
-/// This function converts a single patch operation into a JsonValue representation
-/// that follows RFC 6902 format, making it easy to serialize patches for transmission.
-///
-/// ## Example
-///
-/// ```gleam
-/// import squirtle
-///
-/// let patch = squirtle.Add(path: "/name", value: squirtle.String("John"))
-/// squirtle.patch_to_json_value(patch)
-/// // => Object(...) representing {"op":"add","path":"/name","value":"John"}
-/// ```
-pub fn patch_to_json_value(patch: Patch) -> JsonValue {
-  case patch {
-    Add(path, value) ->
-      Object(
-        dict.from_list([
-          #("op", String("add")),
-          #("path", String(path)),
-          #("value", value),
-        ]),
-      )
-    Remove(path) ->
-      Object(
-        dict.from_list([#("op", String("remove")), #("path", String(path))]),
-      )
-    Replace(path, value) ->
-      Object(
-        dict.from_list([
-          #("op", String("replace")),
-          #("path", String(path)),
-          #("value", value),
-        ]),
-      )
-    Copy(from, path) ->
-      Object(
-        dict.from_list([
-          #("op", String("copy")),
-          #("from", String(from)),
-          #("path", String(path)),
-        ]),
-      )
-    Move(from, path) ->
-      Object(
-        dict.from_list([
-          #("op", String("move")),
-          #("from", String(from)),
-          #("path", String(path)),
-        ]),
-      )
-    Test(path, value) ->
-      Object(
-        dict.from_list([
-          #("op", String("test")),
-          #("path", String(path)),
-          #("value", value),
-        ]),
-      )
-  }
-}
-
-/// Convert a Patch operation to a JSON string
-///
-/// This function converts a single patch operation to its JSON string representation
-/// according to RFC 6902 format.
-///
-/// ## Example
-///
-/// ```gleam
-/// import squirtle
-///
-/// let patch = squirtle.Add(path: "/name", value: squirtle.String("John"))
-/// squirtle.patch_to_string(patch)
-/// // => "{\"op\":\"add\",\"path\":\"/name\",\"value\":\"John\"}"
-/// ```
-pub fn patch_to_string(patch: Patch) -> String {
-  patch |> patch_to_json_value |> json_value_to_string
-}
-
-/// Convert a list of Patch operations to a JSON array string
-///
-/// This function converts a list of patch operations to their JSON array string
-/// representation according to RFC 6902 format, making it easy to send patches
-/// over the wire.
-///
-/// ## Example
-///
-/// ```gleam
-/// import squirtle
-///
-/// let patches = [
-///   squirtle.Replace(path: "/name", value: squirtle.String("Jane")),
-///   squirtle.Add(path: "/age", value: squirtle.Int(30)),
-/// ]
-/// squirtle.patches_to_string(patches)
-/// // => "[{\"op\":\"replace\",\"path\":\"/name\",\"value\":\"Jane\"},{\"op\":\"add\",\"path\":\"/age\",\"value\":30}]"
-/// ```
-pub fn patches_to_string(patches: List(Patch)) -> String {
-  patches
-  |> list.map(patch_to_json_value)
-  |> Array
-  |> json_value_to_string
 }
