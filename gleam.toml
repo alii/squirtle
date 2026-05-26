@@ -1,5 +1,5 @@
 name = "squirtle"
-version = "2.0.0"
+version = "2.1.0"
 
 description = "A JSON Patch (RFC 6902) implementation in Gleam"
 licences = ["MIT"]
@@ -7,7 +7,7 @@ repository = { type = "github", user = "otters", repo = "squirtle" }
 
 [dependencies]
 gleam_json = ">= 3.1.0 and < 4.0.0"
-gleam_stdlib = ">= 0.68.0 and < 1.0.0"
+gleam_stdlib = ">= 0.68.0 and < 2.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.9.0 and < 2.0.0"
