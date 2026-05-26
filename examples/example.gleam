@@ -57,7 +57,9 @@ pub fn main() {
 
   case squirtle.apply(doc, patches) {
     Ok(result) -> {
-      io.println("  Input:  {\"name\": \"John\", \"address\": {\"city\": \"NYC\"}}")
+      io.println(
+        "  Input:  {\"name\": \"John\", \"address\": {\"city\": \"NYC\"}}",
+      )
       io.println("  Output: " <> squirtle.to_string(result))
     }
     Error(err) -> io.println("  Error: " <> squirtle.error_to_string(err))
@@ -131,7 +133,8 @@ pub fn main() {
   // Example 7: Parsing patches from JSON
   io.println("7. Parsing patches from JSON:")
   let assert Ok(doc) = squirtle.parse("{\"count\": 0}")
-  let patches_json = "[{\"op\": \"replace\", \"path\": \"/count\", \"value\": 42}]"
+  let patches_json =
+    "[{\"op\": \"replace\", \"path\": \"/count\", \"value\": 42}]"
   let assert Ok(patches) =
     json.parse(patches_json, decode.list(squirtle.patch_decoder()))
 
