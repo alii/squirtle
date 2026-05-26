@@ -697,7 +697,11 @@ fn do_insert_at_index(
   }
 }
 
-fn replace_at_index(lst: List(a), index: Int, value: a) -> Result(List(a), Nil) {
+fn replace_at_index(
+  lst: List(a),
+  index: Int,
+  value: a,
+) -> Result(List(a), Nil) {
   do_replace_at_index(lst, index, value, 0)
 }
 
@@ -792,39 +796,30 @@ fn diff_objects(
 fn diff_arrays(from: List(Doc), to: List(Doc), path: String) -> List(Patch) {
   let from_len = list.length(from)
   let to_len = list.length(to)
-  let min_len = case from_len < to_len {
-    True -> from_len
-    False -> to_len
-  }
 
-  let change_patches = case min_len > 0 {
-    True ->
-      list.range(0, min_len - 1)
-      |> list.flat_map(fn(idx) {
-        let assert Ok(from_val) = get_at_index(from, idx)
-        let assert Ok(to_val) = get_at_index(to, idx)
-        diff_values(from_val, to_val, path <> "/" <> int.to_string(idx))
-      })
-    False -> []
-  }
+  // Diff the common prefix element-by-element. `zip` truncates to the shorter
+  // list, so this walks both lists once in lockstep (O(n)) rather than
+  // indexing into them per element (which was O(n^2)).
+  let change_patches =
+    list.zip(from, to)
+    |> list.index_map(fn(pair, idx) {
+      let #(from_val, to_val) = pair
+      diff_values(from_val, to_val, path <> "/" <> int.to_string(idx))
+    })
+    |> list.flatten
 
-  let add_patches = case to_len > from_len {
-    True -> {
-      list.range(from_len, to_len - 1)
-      |> list.map(fn(idx) {
-        let assert Ok(val) = get_at_index(to, idx)
-        Add(path: path <> "/-", value: val)
-      })
-    }
-    False -> []
-  }
+  // Anything left in `to` past the common prefix is appended.
+  let add_patches =
+    list.drop(to, from_len)
+    |> list.map(fn(val) { Add(path: path <> "/-", value: val) })
 
+  // Anything left in `from` past the common prefix is removed, highest index
+  // first so earlier removals don't shift the indices of later ones.
   let remove_patches = case from_len > to_len {
-    True -> {
+    True ->
       list.range(to_len, from_len - 1)
       |> list.reverse
       |> list.map(fn(idx) { Remove(path: path <> "/" <> int.to_string(idx)) })
-    }
     False -> []
   }
 
