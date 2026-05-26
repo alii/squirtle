@@ -121,6 +121,26 @@ pub fn diff(from from: Doc, to to: Doc) -> List(Patch) {
   diff_values(from, to, "")
 }
 
+/// Query a document for the node at a JSON Pointer path.
+///
+/// The path follows RFC 6901 syntax: an empty string returns the whole
+/// document, and `/foo/0` descends into object keys and array indices.
+///
+/// ## Example
+///
+/// ```gleam
+/// let assert Ok(doc) = squirtle.parse("{\"users\": [{\"name\": \"John\"}]}")
+/// squirtle.query(doc, "/users/0/name")
+/// // => Ok(String("John"))
+///
+/// squirtle.query(doc, "/users/5")
+/// // => Error(IndexOutOfBounds("/users/5", 5))
+/// ```
+pub fn query(doc: Doc, path: String) -> Result(Doc, PatchError) {
+  parse_path(path)
+  |> result.try(navigate_get(doc, _, path))
+}
+
 /// Parse a JSON string into a Doc.
 ///
 /// ## Example
@@ -438,11 +458,6 @@ fn parse_array_index(token: String, path: String) -> Result(Int, PatchError) {
   }
 }
 
-fn get_value(doc: Doc, path: String) -> Result(Doc, PatchError) {
-  parse_path(path)
-  |> result.try(navigate_get(doc, _, path))
-}
-
 fn navigate_get(
   doc: Doc,
   tokens: List(String),
@@ -504,12 +519,12 @@ fn do_remove(doc: Doc, path: String) -> Result(Doc, PatchError) {
 }
 
 fn do_copy(doc: Doc, from: String, to: String) -> Result(Doc, PatchError) {
-  get_value(doc, from)
+  query(doc, from)
   |> result.try(do_add(doc, to, _))
 }
 
 fn do_move(doc: Doc, from: String, to: String) -> Result(Doc, PatchError) {
-  get_value(doc, from)
+  query(doc, from)
   |> result.try(fn(from_value) {
     do_remove(doc, from)
     |> result.try(do_add(_, to, from_value))
@@ -517,7 +532,7 @@ fn do_move(doc: Doc, from: String, to: String) -> Result(Doc, PatchError) {
 }
 
 fn do_test(doc: Doc, path: String, expect: Doc) -> Result(Doc, PatchError) {
-  use actual <- result.try(get_value(doc, path))
+  use actual <- result.try(query(doc, path))
   case actual == expect {
     True -> Ok(doc)
     False -> Error(TestFailed(path, expect, actual))
